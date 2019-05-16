@@ -4,13 +4,14 @@ import torch
 from ignite import ignite
 from ignite.metrics import Loss
 
-from lr_range import LRFinderIgnite
-from tests.utils import set_reproducible, LogisticRegression, get_loaders
+from finder import LRFinderIgnite
+from tests.utils import set_reproducible, LogisticRegression, get_loaders, DEVICE
 
 
 class TestLRFinder(TestCase):
-
     def test_train_loss_finder(self):
+        """Test whether th LR finder works"""
+        device = DEVICE
         set_reproducible()  # set the seeds
 
         # get the datasets and loaders
@@ -23,8 +24,9 @@ class TestLRFinder(TestCase):
         optimizer = torch.optim.SGD(model.parameters(), lr=0.0001)
         loss_fn = torch.nn.BCELoss()
         train_engine = ignite.engine.create_supervised_trainer(model=model, optimizer=optimizer,
-                                                               loss_fn=loss_fn)
-        test_engine = ignite.engine.create_supervised_evaluator(model=model, metrics={'loss': Loss(loss_fn)})
+                                                               loss_fn=loss_fn, device=device)
+        test_engine = ignite.engine.create_supervised_evaluator(model=model, metrics={'loss': Loss(loss_fn)},
+                                                                device=device)
 
         # test train loss
         values = lr_finder.run(optimizer=optimizer, train_engine=train_engine, train_loader=train_loader,

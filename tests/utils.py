@@ -36,3 +36,6 @@ def get_loaders():
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, drop_last=True)
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, drop_last=True)
     return test_loader, train_loader
+
+
+DEVICE = 'cpu'

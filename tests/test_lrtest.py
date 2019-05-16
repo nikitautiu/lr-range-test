@@ -5,20 +5,21 @@ import ignite
 import torch
 from ignite.metrics import Loss, Accuracy
 
-from lr_range import ModelOrEngineLRRangeTest, LRFinderIgnite, AutomaticLRRangeTest
-from tests.utils import get_loaders, LogisticRegression, set_reproducible
+from lr_range import ModelOrEngineLRRangeTest, AutomaticLRRangeTest
+from finder import LRFinderIgnite
+from tests.utils import get_loaders, LogisticRegression, set_reproducible, DEVICE
 
 
 class DummyLRTester(ModelOrEngineLRRangeTest):
     def run(self, lr_min: float = 1e-7, lr_max: float = 1e1, num_steps: int = 50, smooth_f: float = .05,
-            diverge_th: float = 5., initial_wd_values: Optional[List[float]] = None,
+            diverge_th: float = 5., wd_values: Optional[List[float]] = None,
             pbar: bool = False) -> Dict['str', float]:
-        if initial_wd_values is None:
-            initial_wd_values = [0.0]
+        if wd_values is None:
+            wd_values = [0.0]
 
         all_values = []
         lr_finder = LRFinderIgnite()
-        for wd in initial_wd_values:
+        for wd in wd_values:
             # get the classes generated
             results = self.build_optimizer_trainers_loaders()
             optimizer, train_engine, train_loader, test_engine, test_loader = results
@@ -49,36 +50,37 @@ class TestModelOrEngineLRRangeTest(TestCase):
         model = LogisticRegression(sample_size)
         optimizer = torch.optim.SGD(model.parameters(), lr=0.0001)
         loss_fn = torch.nn.BCELoss()
-        device = 'cuda'
+        device = DEVICE
 
         # create with default evaluator and no test set
-        tester = DummyLRTester(optimizer=optimizer, model=model, loss_fn=loss_fn, train_loader=train_loader)
+        tester = DummyLRTester(optimizer=optimizer, model=model, loss_fn=loss_fn, train_loader=train_loader,
+                               device=device)
         all_values = tester.run()
 
         # create with default evaluator and given test set
         tester = DummyLRTester(optimizer=optimizer, model=model, loss_fn=loss_fn,
-                               train_loader=train_loader, test_loader=test_loader)
+                               train_loader=train_loader, test_loader=test_loader, device=device)
         all_values = tester.run()
 
         # create with default evaluator, given test set and custom metric
         # this is binary classification so we cannot use logits
         tester = DummyLRTester(optimizer=optimizer, model=model, loss_fn=loss_fn,
                                eval_metric=Accuracy(output_transform=lambda x: (x[0] >= 0.5, x[1])),
-                               train_loader=train_loader, test_loader=test_loader, descending=False)
+                               train_loader=train_loader, test_loader=test_loader, descending=False, device=device)
         all_values = tester.run()
 
         # create with custom trainer and no test set
         train_engine = ignite.engine.create_supervised_trainer(model=model, optimizer=optimizer,
                                                                loss_fn=loss_fn, device=device)
         tester = DummyLRTester(optimizer=optimizer, train_engine=train_engine,
-                               train_loader=train_loader)
+                               train_loader=train_loader, device=device)
         all_values = tester.run()
 
         # create with custom trainer and default evaluator and given test set
         train_engine = ignite.engine.create_supervised_trainer(model=model, optimizer=optimizer,
                                                                loss_fn=loss_fn, device=device)
         tester = DummyLRTester(optimizer=optimizer, model=model, loss_fn=loss_fn, train_engine=train_engine,
-                               train_loader=train_loader, test_loader=test_loader)
+                               train_loader=train_loader, test_loader=test_loader, device=device)
         all_values = tester.run()
 
         # create with custom trainer and default evaluator and given test set
@@ -88,7 +90,7 @@ class TestModelOrEngineLRRangeTest(TestCase):
         tester = DummyLRTester(optimizer=optimizer, model=model, train_engine=train_engine,
                                eval_metric=Accuracy(output_transform=lambda x: (x[0] >= 0.5, x[1])),
                                train_loader=train_loader, test_loader=test_loader,
-                               descending=False)
+                               descending=False, device=device)
         all_values = tester.run()
 
         # create with custom trainer and custom evaluator
@@ -97,14 +99,14 @@ class TestModelOrEngineLRRangeTest(TestCase):
         test_engine = ignite.engine.create_supervised_evaluator(model=model, metrics={'loss': Loss(loss_fn)},
                                                                 device=device)
         tester = DummyLRTester(optimizer=optimizer, train_engine=train_engine, test_engine=test_engine,
-                               train_loader=train_loader, test_loader=test_loader)
+                               train_loader=train_loader, test_loader=test_loader, device=device)
         all_values = tester.run()
 
         # create with custom tester and default trainer
         test_engine = ignite.engine.create_supervised_evaluator(model=model, metrics={'loss': Loss(loss_fn)},
                                                                 device=device)
         tester = DummyLRTester(optimizer=optimizer, model=model, loss_fn=loss_fn, test_engine=test_engine,
-                               train_loader=train_loader, test_loader=test_loader)
+                               train_loader=train_loader, test_loader=test_loader, device=device)
         all_values = tester.run()
 
     def test_invalid_testers(self):
@@ -117,36 +119,36 @@ class TestModelOrEngineLRRangeTest(TestCase):
         model = LogisticRegression(sample_size)
         optimizer = torch.optim.SGD(model.parameters(), lr=0.0001)
         loss_fn = torch.nn.BCELoss()
-        device = 'cuda'
+        device = DEVICE
 
         # no model or train_engine
         with self.assertRaisesRegex(TypeError, r'.*(model|engine).*(model|engine).*'):
-            tester = DummyLRTester(optimizer=optimizer, train_loader=train_loader)
+            tester = DummyLRTester(optimizer=optimizer, train_loader=train_loader, device=device)
 
         # no loss_fn
         with self.assertRaisesRegex(TypeError, r'.*loss_fn.*'):
-            tester = DummyLRTester(optimizer=optimizer, model=model, train_loader=train_loader)
+            tester = DummyLRTester(optimizer=optimizer, model=model, train_loader=train_loader, device=device)
 
         # train_engine specified, but no model for default evaluator
         with self.assertRaisesRegex(TypeError, r'.*model.*'):
             train_engine = ignite.engine.create_supervised_trainer(model=model, optimizer=optimizer,
                                                                    loss_fn=loss_fn, device=device)
             tester = DummyLRTester(optimizer=optimizer, loss_fn=loss_fn, train_engine=train_engine,
-                                   train_loader=train_loader, test_loader=test_loader)
+                                   train_loader=train_loader, test_loader=test_loader, device=device)
 
         # train_engine specified, but no loss_fn or eval_metric for evaluator
         with self.assertRaisesRegex(TypeError, r'.*loss_fn.*'):
             train_engine = ignite.engine.create_supervised_trainer(model=model, optimizer=optimizer,
                                                                    loss_fn=loss_fn, device=device)
             tester = DummyLRTester(optimizer=optimizer, train_engine=train_engine,
-                                   train_loader=train_loader, test_loader=test_loader)
+                                   train_loader=train_loader, test_loader=test_loader, device=device)
 
         # NOW test for bad train_engine or test_engines which do not output a loss
         train_engine = ignite.engine.create_supervised_trainer(model=model, optimizer=optimizer,
                                                                loss_fn=loss_fn, device=device,
                                                                output_transform=lambda x, y, y_, loss: None)
         tester = DummyLRTester(optimizer=optimizer, train_engine=train_engine,
-                               train_loader=train_loader)
+                               train_loader=train_loader, device=device)
         with self.assertRaisesRegex(TypeError, r'.*metrics.*'):
             tester.run()  # this should fail because we're returning no loss
 
@@ -155,13 +157,15 @@ class TestModelOrEngineLRRangeTest(TestCase):
                                                                loss_fn=loss_fn, device=device)
         test_engine = ignite.engine.create_supervised_evaluator(model=model, device=device)
         tester = DummyLRTester(optimizer=optimizer, train_engine=train_engine, test_engine=test_engine,
-                               train_loader=train_loader, test_loader=test_loader)
+                               train_loader=train_loader, test_loader=test_loader, device=device)
         with self.assertRaisesRegex(TypeError, r'.*metrics.*'):
             tester.run()  # this should fail because we're returning no loss
 
 
 class TestAutomaticLRRangeTest(TestCase):
     def test_automatic_lrrange(self):
+        """Reproducible test for the automatic range finder."""
+        device = DEVICE
         # add reproducibility
         set_reproducible()
 
@@ -173,20 +177,20 @@ class TestAutomaticLRRangeTest(TestCase):
 
         set_reproducible()
         tester = AutomaticLRRangeTest(optimizer=optimizer, model=model, loss_fn=loss_fn,
-                                      train_loader=train_loader, test_loader=test_loader)
+                                      train_loader=train_loader, test_loader=test_loader, device=device)
         results = tester.run(num_steps=200)
         self.assertAlmostEqual(results['lr_max'], 0.1867, delta=1e-4)
 
         set_reproducible()
         tester = AutomaticLRRangeTest(optimizer=optimizer, model=model, loss_fn=loss_fn,
                                       eval_metric=Accuracy(output_transform=lambda x: (x[0] >= 0.5, x[1])),
-                                      train_loader=train_loader, test_loader=test_loader, descending=False)
+                                      train_loader=train_loader, test_loader=test_loader, descending=False,
+                                      device=device)
         results = tester.run(num_steps=200)
         self.assertAlmostEqual(results['lr_max'], 2.7364, delta=1e-4)
 
         set_reproducible()
         tester = AutomaticLRRangeTest(optimizer=optimizer, model=model, loss_fn=loss_fn,
-                                      train_loader=train_loader)
+                                      train_loader=train_loader, device=device)
         results = tester.run(num_steps=200)
         self.assertAlmostEqual(results['lr_max'], 0.5672, delta=1e-4)
-
