@@ -1,4 +1,5 @@
-from typing import Sequence, List, Optional, Callable, Dict
+import copy
+from typing import Sequence, List, Optional, Dict
 
 import ignite
 import ignite.contrib.handlers
@@ -6,32 +7,12 @@ import matplotlib
 import numpy as np
 import torch
 from ignite.engine import Events
-from ignite.metrics import Metric, Loss
+from ignite.metrics import Loss
 from matplotlib import pyplot as plt, widgets as mwidgets
 from matplotlib.gridspec import GridSpec
 
 from lr_range_test.type_aliases import (OptimizerEngineLoaderTupleType, HistoryType, PlotDataType, OptimizerType,
                                         DataLoaderType, LossFnType)
-
-
-class EpochAverage(Metric):
-    """Metric which averages the result of output_transform over an epoch."""
-
-    def __init__(self, output_transform: Callable):
-        super().__init__(output_transform=output_transform)  # add the output transform
-        self._value: float = 0.
-        self._num_values: int = 0
-
-    def update(self, output: float):
-        self._value += output
-        self._num_values += 1
-
-    def compute(self) -> float:
-        return self._value / self._num_values
-
-    def reset(self):
-        self._value = 0.
-        self._num_values = 0
 
 
 class LRFinderIgnite(object):
@@ -61,39 +42,54 @@ class LRFinderIgnite(object):
         return loss
 
     def _train_step(self, engine) -> None:
-        # get the loss depending on whether we ha ve a test
-        # set or not, from train_engine or test engine
-        loss = self._get_loss()
-        if self.current_ind == 0:
-            self.best_loss = loss  # first iteration
-        else:
-            if loss < self.best_loss:
-                self.best_loss = loss  # update best loss
-            if self.smooth_f > 0:
-                # perform smoothing
-                loss = self.smooth_f * loss + (1 - self.smooth_f) * self.history[-1][1]
-
-        # append it to the history and stop if the loss diverges
-        self.history.append((self.lr_values[self.current_ind], loss))
-        if loss > self.diverge_th * self.best_loss or np.isnan(self.history[-1][1]):
-            self.train_engine.terminate()
-            print('Stopping early, the loss has diverged')
-
-        # update the learning rate
-        if self.current_ind < len(self.lr_values) - 1:
-            for param_group in self.optimizer.param_groups:
-                param_group['lr'] = self.lr_values[self.current_ind]
-
         # terminate. needed because we may have to incompletely consume the last epoch
-        if self.current_ind == len(self.lr_values) - 1:
-            self.train_engine.terminate()  # terminate on last value of lr
+        if self.current_ind < len(self.lr_values):
+            # get the loss depending on whether we ha ve a test
+            # set or not, from train_engine or test engine
+            loss = self._get_loss()
+            if self.current_ind == 0:
+                self.best_loss = loss  # first iteration
+            else:
+                # update best loss recorded until now
+                if self.descending and loss < self.best_loss:
+                    self.best_loss = loss
+                if not self.descending and loss > self.best_loss:
+                    self.best_loss = loss
+                if self.smooth_f > 0:
+                    loss = self.smooth_f * loss + (1 - self.smooth_f) * self.history[-1][1]  # perform smoothing
 
-        self.current_ind += 1  # update the iteration counter
+            # append it to the history
+            self.history.append((self.lr_values[self.current_ind], loss))
+
+            # stop if loss diverges. this means that
+            # either it grows more than a factor of diverge_th than the best loss if it's supposed to descend
+            # or it drops diverge_th times
+            if self.descending:
+                diverging = loss > self.diverge_th * self.best_loss or np.isnan(self.history[-1][1])
+            else:
+                diverging = loss < self.best_loss / self.diverge_th or np.isnan(self.history[-1][1])
+            if diverging:
+                self.train_engine.terminate()
+                print('Stopping early, the loss has diverged')
+
+            # update the learning rate
+            if self.current_ind < len(self.lr_values) - 1:
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = self.lr_values[self.current_ind]
+
+            self.current_ind += 1  # update the iteration counter
+        else:
+            self.train_engine.terminate()  # terminate after last epoch
 
     def run(self, optimizer: torch.optim.Optimizer, train_engine: ignite.engine.Engine,
             train_loader: DataLoaderType, lr_max: float, lr_min: float, num_steps: int,
-            smooth_f: float = 0.05, diverge_th: float = 5., pbar: bool = True,
-            test_engine: Optional[ignite.engine.Engine] = None, test_loader: Optional[Sequence] = None) -> HistoryType:
+            smooth_f: float = 0.05, diverge_th: float = 5., descending: bool = True,
+            pbar: bool = True, test_engine: Optional[ignite.engine.Engine] = None,
+            test_loader: Optional[Sequence] = None) -> HistoryType:
+        # clone hte engines
+        train_engine = copy.copy(train_engine)
+        test_engine = copy.copy(test_engine)
+
         # get the model and loaders
         self.smooth_f = smooth_f
         self.diverge_th = diverge_th
@@ -103,20 +99,12 @@ class LRFinderIgnite(object):
         self.test_loader = test_loader
         self.train_engine = train_engine
         self.train_loader = train_loader
+        self.descending = descending
 
         self.lr_values = np.geomspace(lr_min, lr_max, num=num_steps)
         self.current_ind = 0
         self.best_loss = None
         self.history = []
-
-        # memorize the initial event handlers
-        train_handlers = train_engine._event_handlers
-        train_events = train_engine._allowed_events
-
-        # add the listeners for the test steps
-        if self.test_engine is not None:
-            test_handlers = test_engine._event_handlers
-            test_events = test_engine._allowed_events
 
         # add progress bar
         if pbar:
@@ -130,13 +118,6 @@ class LRFinderIgnite(object):
         # add the event to evaluate the learning rate
         train_engine.on(Events.ITERATION_COMPLETED)(self._train_step)
         train_engine.run(data=train_loader, max_epochs=(num_steps // len(self.train_loader)) + 1)
-
-        # remove all added handlers by force (note: kinda hackish)
-        train_engine._allowed_events = train_events
-        train_engine._event_handlers = train_handlers
-        if self.test_engine is not None:
-            test_engine._allowed_events = test_events
-            test_engine._event_handlers = test_handlers
 
         return self.history
 
@@ -350,7 +331,7 @@ class ModelOrEngineLRRangeTest(BaseLRRangeTest):
                  train_engine: Optional[ignite.engine.Engine] = None,
                  test_engine: Optional[ignite.engine.Engine] = None, test_loader: Optional[DataLoaderType] = None,
                  loss_fn: Optional[LossFnType] = None, eval_metric: Optional[ignite.metrics.Metric] = None,
-                 device: str = 'cuda') -> None:
+                 descending: bool = True, device: str = 'cuda') -> None:
         """
         An LR range test base class that simplifies initialization of the engines Provides several
         parameters setups in which it can be run. For some of these, the class automatically
@@ -387,9 +368,11 @@ class ModelOrEngineLRRangeTest(BaseLRRangeTest):
         :param test_loader: An iterable to load data from and feed to the evaluator,
         :param loss_fn: An objective function taking outputs and predictions and returning a metric.
         :param device: the device to do the training/evaluation on (default: cuda)
+        :param descending: whether the metric/loss chosen should descend or not (ie. accuracy should not)
         """
 
         super().__init__()
+        self.descending = descending
         self.optimizer: OptimizerType = optimizer
         self.train_engine: ignite.engine.Engine
         self.train_loader: DataLoaderType = train_loader
@@ -442,7 +425,7 @@ class ModelOrEngineLRRangeTest(BaseLRRangeTest):
 class InteractiveLRRangeTest(ModelOrEngineLRRangeTest):
     def run(self, lr_min: float = 1e-7, lr_max: float = 1e1, num_steps: int = 50,
             smooth_f: float = .05, diverge_th: float = 5.,
-            initial_wd_values: Optional[List[float]] = None) -> Dict['str', float]:
+            initial_wd_values: Optional[List[float]] = None, pbar: bool = False) -> Dict['str', float]:
         """Perform an interactive  LR range test. The method constructs the loss plots for the given
         weight decays in the interval specified delimited by `lr_min` and `lr_max` for `num_steps` of
         incrementation. Ifn o weight decay values are specified, it uses none.
@@ -474,7 +457,9 @@ class InteractiveLRRangeTest(ModelOrEngineLRRangeTest):
             # do a lr finding run
             run = lr_finder.run(optimizer=optimizer, train_engine=train_engine, train_loader=train_loader,
                                 test_engine=test_engine, test_loader=test_loader, lr_min=lr_min, lr_max=lr_max,
-                                num_steps=num_steps, smooth_f=smooth_f, diverge_th=diverge_th)
+                                num_steps=num_steps, smooth_f=smooth_f, diverge_th=diverge_th,
+                                descending=self.descending,
+                                pbar=pbar)
             value_list = run
             all_values.append((list(value_list), wd))
 
@@ -516,19 +501,31 @@ class AutomaticLRRangeTest(ModelOrEngineLRRangeTest):
 
     def run(self, lr_min: float = 1e-7, lr_max: float = 1e1, num_steps: int = 50,
             smooth_f: float = .05, diverge_th: float = 5.,
-            initial_wd_values: Optional[List[float]] = None, mult_f: float = 15.) -> Dict['str', float]:
+            wd_values: Optional[List[float]] = None, mult_f: float = 15.,
+            pbar: bool = False) -> Dict['str', float]:
         """Similar to the interactive test, but the values for lr are selected automatically.
         The maximum lr is selected as the steepest descent value of the smoothed value plot.
         The best weight decay is selected as being the one whose steepest descent point is the greatest.
+
+        :param pbar: whether to print a progress bar during training
+        :param mult_f: what fraction of the best lr should the lowest lr be
+        :param wd_values: the weight decay values to test for
+        :param diverge_th:  the coefficient by which the current metric must differ from the best recorded value
+            to consider that the metric has diverged
+        :param num_steps: the number of steps to run annealing on
+        :param lr_max: the lr to end on
+        :param lr_min: the lr to start from
+        :param smooth_f: the alpha coefficient for exponentially weighted average
+        :param descending: whether the metric is expected to descend or not (ie. for accuracy should be false)
         """
 
         # initialize the rerun_wd values
-        if initial_wd_values is None:
-            initial_wd_values = [0.0]
+        if wd_values is None:
+            wd_values = [0.0]
 
         all_values = []
         lr_finder = LRFinderIgnite()
-        for wd in initial_wd_values:
+        for wd in wd_values:
             # get the classes generated
             results = self.build_optimizer_trainers_loaders()
             optimizer, train_engine, train_loader, test_engine, test_loader = results
@@ -540,25 +537,32 @@ class AutomaticLRRangeTest(ModelOrEngineLRRangeTest):
             # do a lr finding run
             run = lr_finder.run(optimizer=optimizer, train_engine=train_engine, train_loader=train_loader,
                                 test_engine=test_engine, test_loader=test_loader, lr_min=lr_min, lr_max=lr_max,
-                                num_steps=num_steps, smooth_f=smooth_f, diverge_th=diverge_th)
+                                num_steps=num_steps, smooth_f=smooth_f, diverge_th=diverge_th,
+                                descending=self.descending,
+                                pbar=pbar)
             value_list = run
             all_values.append((list(value_list), wd))
 
         # find the best values for lr and weight decay
         best_values = []
         for values in all_values:
-            values, wd = self.values[-1]
+            values, wd = values
             x, y = list(zip(*sorted(values)))
             x, y = np.array(x), np.nan_to_num(np.array(y))
             # compute gradients
             grads = np.gradient(y)
-            best_x = x[np.argmin(grads)]
+
+            # find wither the steepest descent or ascent
+            if self.descending:
+                best_x = x[np.argmin(grads)]
+            else:
+                best_x = x[np.argmax(grads)]
             best_values.append((best_x, wd))
 
         # get teh weight decay with the largest learning rate corresponding to
         # its steepest descent
-        best_values = sorted(best_values, reverse=True)  # best x is first
-        wd, lr_max = best_values[0]
+        best_values = sorted(best_values, reverse=self.descending)
+        lr_max, wd = best_values[0]
         lr_min = lr_max / mult_f  # divide the max_lr by a factor of mult_f
 
         return {'lr_min': lr_min, 'lr_max': lr_max, 'weight_decay': wd}

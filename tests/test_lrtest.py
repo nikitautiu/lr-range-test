@@ -5,13 +5,14 @@ import ignite
 import torch
 from ignite.metrics import Loss, Accuracy
 
-from lr_range import ModelOrEngineLRRangeTest, LRFinderIgnite
-from tests.utils import get_loaders, LogisticRegression
+from lr_range import ModelOrEngineLRRangeTest, LRFinderIgnite, AutomaticLRRangeTest
+from tests.utils import get_loaders, LogisticRegression, set_reproducible
 
 
 class DummyLRTester(ModelOrEngineLRRangeTest):
     def run(self, lr_min: float = 1e-7, lr_max: float = 1e1, num_steps: int = 50, smooth_f: float = .05,
-            diverge_th: float = 5., initial_wd_values: Optional[List[float]] = None) -> Dict['str', float]:
+            diverge_th: float = 5., initial_wd_values: Optional[List[float]] = None,
+            pbar: bool = False) -> Dict['str', float]:
         if initial_wd_values is None:
             initial_wd_values = [0.0]
 
@@ -40,6 +41,8 @@ class TestModelOrEngineLRRangeTest(TestCase):
     def test_valid_testers(self):
         """Test whether correct initialization works for the lr range test and
         whether the test runs"""
+        # add reproducibility
+        set_reproducible()
 
         train_loader, test_loader = get_loaders()
         sample_size = next(iter(test_loader))[0].shape[1]
@@ -61,7 +64,7 @@ class TestModelOrEngineLRRangeTest(TestCase):
         # this is binary classification so we cannot use logits
         tester = DummyLRTester(optimizer=optimizer, model=model, loss_fn=loss_fn,
                                eval_metric=Accuracy(output_transform=lambda x: (x[0] >= 0.5, x[1])),
-                               train_loader=train_loader, test_loader=test_loader)
+                               train_loader=train_loader, test_loader=test_loader, descending=False)
         all_values = tester.run()
 
         # create with custom trainer and no test set
@@ -84,7 +87,8 @@ class TestModelOrEngineLRRangeTest(TestCase):
                                                                loss_fn=loss_fn, device=device)
         tester = DummyLRTester(optimizer=optimizer, model=model, train_engine=train_engine,
                                eval_metric=Accuracy(output_transform=lambda x: (x[0] >= 0.5, x[1])),
-                               train_loader=train_loader, test_loader=test_loader)
+                               train_loader=train_loader, test_loader=test_loader,
+                               descending=False)
         all_values = tester.run()
 
         # create with custom trainer and custom evaluator
@@ -105,6 +109,9 @@ class TestModelOrEngineLRRangeTest(TestCase):
 
     def test_invalid_testers(self):
         """Test whether the lr range test class properly fails initialization with bad parameters"""
+        # add reproducibility
+        set_reproducible()
+
         train_loader, test_loader = get_loaders()
         sample_size = next(iter(test_loader))[0].shape[1]
         model = LogisticRegression(sample_size)
@@ -151,3 +158,35 @@ class TestModelOrEngineLRRangeTest(TestCase):
                                train_loader=train_loader, test_loader=test_loader)
         with self.assertRaisesRegex(TypeError, r'.*metrics.*'):
             tester.run()  # this should fail because we're returning no loss
+
+
+class TestAutomaticLRRangeTest(TestCase):
+    def test_automatic_lrrange(self):
+        # add reproducibility
+        set_reproducible()
+
+        train_loader, test_loader = get_loaders()
+        sample_size = next(iter(test_loader))[0].shape[1]
+        model = LogisticRegression(sample_size)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.0001)
+        loss_fn = torch.nn.BCELoss()
+
+        set_reproducible()
+        tester = AutomaticLRRangeTest(optimizer=optimizer, model=model, loss_fn=loss_fn,
+                                      train_loader=train_loader, test_loader=test_loader)
+        results = tester.run(num_steps=200)
+        self.assertAlmostEqual(results['lr_max'], 0.1867, delta=1e-4)
+
+        set_reproducible()
+        tester = AutomaticLRRangeTest(optimizer=optimizer, model=model, loss_fn=loss_fn,
+                                      eval_metric=Accuracy(output_transform=lambda x: (x[0] >= 0.5, x[1])),
+                                      train_loader=train_loader, test_loader=test_loader, descending=False)
+        results = tester.run(num_steps=200)
+        self.assertAlmostEqual(results['lr_max'], 2.7364, delta=1e-4)
+
+        set_reproducible()
+        tester = AutomaticLRRangeTest(optimizer=optimizer, model=model, loss_fn=loss_fn,
+                                      train_loader=train_loader)
+        results = tester.run(num_steps=200)
+        self.assertAlmostEqual(results['lr_max'], 0.5672, delta=1e-4)
+

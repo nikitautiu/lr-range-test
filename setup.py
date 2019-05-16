@@ -21,15 +21,16 @@ setup(
     author="Nichita Utiu",
     author_email="nikita.utiu@gmail.com",
 
-    description="Interactive LR range test for pytorch",
+    description="LR range test for pytorch models and/or ignite engines",
 
     packages=find_packages(exclude=('tests',)),
 
     install_requires=[
-        'matplotlib>=3.0.3',
-        'numpy>=1.16.3',
-        'pytorch-ignite>=0.2.0',
-        'torch>=1.0.1'
+        'matplotlib==3',
+        'numpy==1.16',
+        'pytorch-ignite==0.2',
+        'torch==1',
+        'tqdm==4.32'
     ],
 
     classifiers=[
