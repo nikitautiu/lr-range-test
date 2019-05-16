@@ -1,0 +1,4 @@
+matplotlib==3.0.3
+numpy==1.16.3
+pytorch-ignite==0.2.0
+pytorch=1.0.1
