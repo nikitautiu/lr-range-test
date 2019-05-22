@@ -3,6 +3,9 @@ import os
 import re
 
 from setuptools import setup
+from sphinx.setup_command import BuildDoc
+
+cmdclass = {'build_sphinx': BuildDoc}
 
 
 def read(filename):
@@ -23,6 +26,15 @@ setup(
     description="LR range test for pytorch models and/or ignite engines",
 
     packages=['lr_range_test'],
+
+    cmdclass=cmdclass,
+    command_options={
+        'build_sphinx': {
+            'project': ('setup.py', "Nichita Utiu"),
+            'version': ('setup.py', "0.0.1"),
+            'release': ('setup.py', "0.0.1"),
+            'source_dir': ('setup.py', 'docs')}
+    },
 
     install_requires=[
         'matplotlib>=3.0.3',

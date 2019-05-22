@@ -7,9 +7,9 @@ import torch
 from ignite.metrics import Loss
 
 from lr_range_test.finder import LRFinderIgnite
+from lr_range_test.plot import InteractiveLrPlot
 from lr_range_test.type_aliases import (OptimizerEngineLoaderTupleType, OptimizerType,
                                         DataLoaderType, LossFnType)
-from lr_range_test.plot import InteractiveLrPlot
 
 
 class BaseLRRangeTest(object):
@@ -76,6 +76,7 @@ class ModelOrEngineLRRangeTest(BaseLRRangeTest):
         super().__init__()
         self.descending = descending
         self.optimizer: OptimizerType = optimizer
+        self.model: Optional[torch.nn.Module] = model
         self.train_engine: ignite.engine.Engine
         self.train_loader: DataLoaderType = train_loader
         self.test_loader: Optional[DataLoaderType] = test_loader
@@ -120,8 +121,22 @@ class ModelOrEngineLRRangeTest(BaseLRRangeTest):
         else:
             self.test_engine = None  # no need for a test engine if no test loader specified
 
+        # initialize the checkpointing
+        if self.model is not None:
+            self.save_optimizer_and_model()
+
     def build_optimizer_trainers_loaders(self) -> OptimizerEngineLoaderTupleType:
         return self.optimizer, self.train_engine, self.train_loader, self.test_engine, self.test_loader
+
+    def save_optimizer_and_model(self):
+        """Persist the optimizer and model data so we can restore it later."""
+        self.optimizer_state_dict = self.optimizer.state_dict()
+        self.model_state_dict = self.model.state_dict()
+
+    def restore_optimizer_and_model(self):
+        """Restore the model and optimizer given as arguments to the previously-saved state"""
+        self.optimizer.load_state_dict(self.optimizer_state_dict)
+        self.model.load_state_dict(self.model_state_dict)
 
 
 class InteractiveLRRangeTest(ModelOrEngineLRRangeTest):
@@ -140,6 +155,8 @@ class InteractiveLRRangeTest(ModelOrEngineLRRangeTest):
         alongside the last entered weight decay value. The plot can be rerun with different values of `lr_min, `lr_max`,
         `wd` and `num_steps` using the "PLOT" inputs.
         """
+        results = self.build_optimizer_trainers_loaders()
+        optimizer, train_engine, train_loader, test_engine, test_loader = results
 
         # initialize the rerun_wd values
         if wd_values is None:
@@ -149,9 +166,7 @@ class InteractiveLRRangeTest(ModelOrEngineLRRangeTest):
         lr_finder = LRFinderIgnite()
         for wd in wd_values:
             # get the classes generated
-            results = self.build_optimizer_trainers_loaders()
-            optimizer, train_engine, train_loader, test_engine, test_loader = results
-
+            self.restore_optimizer_and_model()
             # update the weight_decay
             for param_group in optimizer.param_groups:
                 param_group['weight_decay'] = wd
@@ -181,9 +196,7 @@ class InteractiveLRRangeTest(ModelOrEngineLRRangeTest):
                 lr_min, lr_max = min(lr_min, lr_max), max(lr_min, lr_max)
 
                 # get the classes generated
-                results = self.build_optimizer_trainers_loaders()
-                optimizer, train_engine, train_loader, test_engine, test_loader = results
-
+                self.restore_optimizer_and_model()
                 # update the weight_decay
                 for param_group in optimizer.param_groups:
                     param_group['weight_decay'] = wd
@@ -221,6 +234,10 @@ class AutomaticLRRangeTest(ModelOrEngineLRRangeTest):
         :param lr_min: the lr to start from
         :param smooth_f: the alpha coefficient for the exponential moving average
         """
+        # get the classes generated
+
+        results = self.build_optimizer_trainers_loaders()
+        optimizer, train_engine, train_loader, test_engine, test_loader = results
 
         # initialize the rerun_wd values
         if wd_values is None:
@@ -229,10 +246,7 @@ class AutomaticLRRangeTest(ModelOrEngineLRRangeTest):
         all_values = []
         lr_finder = LRFinderIgnite()
         for wd in wd_values:
-            # get the classes generated
-            results = self.build_optimizer_trainers_loaders()
-            optimizer, train_engine, train_loader, test_engine, test_loader = results
-
+            self.restore_optimizer_and_model()
             # update the weight_decay
             for param_group in optimizer.param_groups:
                 param_group['weight_decay'] = wd
