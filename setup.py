@@ -25,10 +25,10 @@ setup(
     packages=['lr_range_test'],
 
     install_requires=[
-        'matplotlib==3',
+        'matplotlib>=3.0.3',
         'numpy==1.16',
         'pytorch-ignite==0.2',
-        'pytorch==1',
+        'pytorch>=1.0.1',
         'tqdm==4.32'
     ],
     test_suite='tests',

@@ -6,10 +6,10 @@ import numpy as np
 import torch
 from ignite.metrics import Loss
 
-from finder import LRFinderIgnite
+from lr_range_test.finder import LRFinderIgnite
 from lr_range_test.type_aliases import (OptimizerEngineLoaderTupleType, OptimizerType,
                                         DataLoaderType, LossFnType)
-from plot import InteractiveLrPlot
+from lr_range_test.plot import InteractiveLrPlot
 
 
 class BaseLRRangeTest(object):

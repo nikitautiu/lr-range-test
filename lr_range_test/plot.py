@@ -5,7 +5,7 @@ import numpy as np
 from matplotlib import pyplot as plt, widgets as mwidgets
 from matplotlib.gridspec import GridSpec
 
-from type_aliases import PlotDataType
+from lr_range_test.type_aliases import PlotDataType
 
 
 class InteractiveLrPlot(object):

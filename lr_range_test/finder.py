@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from ignite.engine import Events
 
-from type_aliases import DataLoaderType, HistoryType
+from lr_range_test.type_aliases import DataLoaderType, HistoryType
 
 
 class LRFinderIgnite(object):
