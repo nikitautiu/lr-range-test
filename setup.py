@@ -2,7 +2,6 @@ import io
 import os
 import re
 
-from setuptools import find_packages
 from setuptools import setup
 
 
@@ -23,15 +22,16 @@ setup(
 
     description="LR range test for pytorch models and/or ignite engines",
 
-    packages=find_packages(exclude=('tests',)),
+    packages=['lr_range_test'],
 
     install_requires=[
         'matplotlib==3',
         'numpy==1.16',
         'pytorch-ignite==0.2',
-        'torch==1',
+        'pytorch==1',
         'tqdm==4.32'
     ],
+    test_suite='tests',
 
     classifiers=[
         'Development Status :: 2 - Pre-Alpha',
