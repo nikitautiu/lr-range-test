@@ -28,7 +28,6 @@ setup(
         'matplotlib>=3.0.3',
         'numpy==1.16',
         'pytorch-ignite==0.2',
-        'pytorch>=1.0.1',
         'tqdm==4.32'
     ],
     test_suite='tests',
