@@ -12,9 +12,9 @@ To install simply use pip on the repository or download and install
 
 .. code-block:: bash
 
-    pip install -e https://gitlab.rist.cloud/utiu/lr-range-test.git
+    pip install -e git+https://github.com/nikitautiu/lr-range-test.git
     # or
-    git clone https://gitlab.rist.cloud/utiu/lr-range-test.git
+    git clone https://github.com/nikitautiu/lr-range-test.git
     cd lr-range-test
     pip install -e .
 
