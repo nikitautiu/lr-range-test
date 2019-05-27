@@ -1,3 +1,4 @@
+import copy
 from typing import List, Optional, Dict
 
 import ignite
@@ -25,53 +26,61 @@ class BaseLRRangeTest(object):
 
 
 class ModelOrEngineLRRangeTest(BaseLRRangeTest):
-    def run(self, lr_min: float = 1e-7, lr_max: float = 1e1, num_steps: int = 50, smooth_f: float = .05,
-            diverge_th: float = 5., wd_values: Optional[List[float]] = None) -> Dict['str', float]:
-        raise NotImplementedError  # this serves as a base class and doesn't implement run
+    """An LR range test base class that simplifies initialization of the engines Provides several
+    parameters setups in which it can be run. For some of these, the class automatically
+    creates trainers and evaluators, and for others, the users can provide their own.
+
+    Allowed parameter combinations:
+
+    (model, optimizer, loss_fn, train_loader)
+        The data is taken from `train_loader` and ``model`` is trained
+        with ``optimizer``. The loss value is taken at the end of each iteration from the output of the trainer.
+        The output should have a key called "loss".
+
+    (model, optimizer, loss_fn, train_loader, test_loader)
+        The same a the last one, but the loss is computed
+        with data from the ``test_loader`` after each iteration of ``train_loader``.
+
+    (model, optimizer, loss_fn, test_engine, train_loader, test_loader) -
+        A default trainer will be created, but ``test_engine`` will be used as an evaluator.
+
+    (model, train_engine, optimizer, train_loader)
+        The ``optimizer`` should belong to the ``train_engine``. The loss is taken
+        from the output of the ``train_engine``.
+
+    (model, train_engine, model, optimizer, train_loader, test_loader)
+        A default evaluator is build using ``model`` and ``loss_fn`` and the loss is computed on the test set.
+
+    (model, train_engine, test_engine, train_loader, test_loader)
+        Computes the loss using ``test_engine`` on data from ``test_loader``.
+
+    The model and the optimizer always have to be specified, even if they are trained by proxy using a train engine.
+    This is because they have to be reset at the end of the run and when restarting the run for a new plot (in the
+    interactive case).
+
+    The train engine should have key called "loss" in the output. The test engine should have a metric
+    called "loss" if used. (*Note*: The metric does not have to necessarily represent "the loss". I can be accuracy or
+    anything the user wants to use). If using the default tests engine, ``loss_fn`` will be used as a metric.
+    However, any loss will be overriden, if ``eval_metric`` is provided.
+
+    :param eval_metric: An ignite metric to use when evaluating the test_loader.
+    :param optimizer: The optimizer to use for the LR range test.
+    :param train_loader: An iterable to load data from and feed to the trainer.
+    :param model: A torch module receiving inputs and outputting predictions
+    :param train_engine: An alternative to `model`. Used for training. Must output 'loss'.
+    :param test_engine: An alternative to the default evaluator. Must output a metric called 'loss'
+    :param test_loader: An iterable to load data from and feed to the evaluator,
+    :param loss_fn: An objective function taking outputs and predictions and returning a metric.
+    :param device: the device to do the training/evaluation on (default: cuda)
+    :param descending: whether the metric/loss chosen should descend or not (ie. accuracy should not)
+    """
 
     def __init__(self, optimizer: OptimizerType, train_loader: DataLoaderType,
-                 model: Optional[torch.nn.Module] = None,
+                 model: torch.nn.Module,
                  train_engine: Optional[ignite.engine.Engine] = None,
                  test_engine: Optional[ignite.engine.Engine] = None, test_loader: Optional[DataLoaderType] = None,
                  loss_fn: Optional[LossFnType] = None, eval_metric: Optional[ignite.metrics.Metric] = None,
                  descending: bool = True, device: str = 'cuda') -> None:
-        """
-        An LR range test base class that simplifies initialization of the engines Provides several
-        parameters setups in which it can be run. For some of these, the class automatically
-        creates trainers and evaluators, and for others, the users can provide their own.
-
-        Allowed parameter combinations:
-        * (model, optimizer, loss_fn, train_loader) - The data is taken from `train_loader` and `model` is trained
-            with `optimizer`. The loss value is taken at the end of each iteration from the output of the trainer.
-            The output should have a key called 'loss'
-        * (model, optimizer, loss_fn, train_loader, test_loader) - The same a the last one, but the loss is computed
-            with data from the `test_loader` after each iteration of `train_loader`.
-        * (model, optimizer, loss_fn, test_engine, train_loader, test_loader) - A default trainer will be created, but
-            `test_engine` will be used as an evaluator.
-        * (train_engine, optimizer, train_loader) - The `optimizer` should belong to the `train_engine`. The loss
-            is taken from the output of the train_engine.
-        * (train_engine, model, optimizer, train_loader, test_loader) - A default evaluator is build using
-            `model` and `loss_fn` and the loss is computed on the test set.
-        * (train_engine, test_engine, train_loader, test_loader) - Computes the loss using `test_engine` on data
-            from `test_loader`.
-
-        Either `model` or `train_engine` has to be specified. If `model` is specified, so should be `loss_fn`.
-        `loss_fn` and `model` also have to be specified if you're using a `test_loader` but not a custom `test_engine`
-
-        The train engine should have key called 'loss' in the output. The test engine should have a metric
-        called `loss` if used.
-
-        :param eval_metric: An ignite metric to use when evaluating the test_loader.
-        :param optimizer: The optimizer to use for the LR range test.
-        :param train_loader: An iterable to load data from and feed to the trainer.
-        :param model: A torch module receiving inputs and outputting predictions
-        :param train_engine: An alternative to `model`. Used for training. Must output 'loss'.
-        :param test_engine: An alternative to the default evaluator. Must output a metric called 'loss'
-        :param test_loader: An iterable to load data from and feed to the evaluator,
-        :param loss_fn: An objective function taking outputs and predictions and returning a metric.
-        :param device: the device to do the training/evaluation on (default: cuda)
-        :param descending: whether the metric/loss chosen should descend or not (ie. accuracy should not)
-        """
 
         super().__init__()
         self.descending = descending
@@ -95,43 +104,50 @@ class ModelOrEngineLRRangeTest(BaseLRRangeTest):
                                                                         loss_fn=loss_fn, device=device,
                                                                         non_blocking=True)
 
+        # get the metric to use
+        new_metric = None
+        if eval_metric is not None:
+            new_metric = eval_metric
+        elif loss_fn is not None:
+            # use the given eval_metric if provided, but fallback
+            # to using the loss averaged over the entire epoch
+            new_metric = Loss(loss_fn)
+
         # if the test loader is present, then we need an engine for training
         if test_loader is not None:
             # test engine is needed only if we have a test loader
             if test_engine is None:
-                # create a default test engine with the loss fn as output
-                # use the given eval_metric if provided, but fallback
-                # to using the loss averaged over the entire epoch
                 if eval_metric is None:
                     if loss_fn is None:
                         # error if no metric or loss_fn
                         raise TypeError('loss_fn has to be provided if using the default evaluator and not '
                                         'providing a metric')
-                    eval_metric = Loss(loss_fn)
-
                 if model is None:
                     raise TypeError('model must be provided if using the default evaluator')
 
-                # create the test engine
+                # create a default test engine
                 self.test_engine = ignite.engine.create_supervised_evaluator(model,
-                                                                             metrics={'loss': eval_metric},
+                                                                             metrics={'loss': new_metric},
                                                                              device=device, non_blocking=True)
             else:
                 self.test_engine = test_engine  # use the specified engine
+                # attach a new metric if present
+                if new_metric is not None:
+                    new_metric.attach(self.test_engine, 'loss')
         else:
             self.test_engine = None  # no need for a test engine if no test loader specified
 
-        # initialize the checkpointing
-        if self.model is not None:
-            self.save_optimizer_and_model()
+    def run(self, lr_min: float = 1e-7, lr_max: float = 1e1, num_steps: int = 50, smooth_f: float = .05,
+            diverge_th: float = 5., wd_values: Optional[List[float]] = None) -> Dict['str', float]:
+        raise NotImplementedError  # this serves as a base class and doesn't implement run
 
     def build_optimizer_trainers_loaders(self) -> OptimizerEngineLoaderTupleType:
         return self.optimizer, self.train_engine, self.train_loader, self.test_engine, self.test_loader
 
     def save_optimizer_and_model(self):
         """Persist the optimizer and model data so we can restore it later."""
-        self.optimizer_state_dict = self.optimizer.state_dict()
-        self.model_state_dict = self.model.state_dict()
+        self.optimizer_state_dict = copy.deepcopy(self.optimizer.state_dict())
+        self.model_state_dict = copy.deepcopy(self.model.state_dict())
 
     def restore_optimizer_and_model(self):
         """Restore the model and optimizer given as arguments to the previously-saved state"""
@@ -152,9 +168,10 @@ class InteractiveLRRangeTest(ModelOrEngineLRRangeTest):
         to the best metric recorded until now.
 
         The best interval is selected from the plot by dragging. On exit, the last interval selected is returned
-        alongside the last entered weight decay value. The plot can be rerun with different values of `lr_min, `lr_max`,
+        alongside the last entered weight decay value. The plot can be rerun with different values of `lr_min`, `lr_max`,
         `wd` and `num_steps` using the "PLOT" inputs.
         """
+        self.save_optimizer_and_model()
         results = self.build_optimizer_trainers_loaders()
         optimizer, train_engine, train_loader, test_engine, test_loader = results
 
@@ -163,7 +180,6 @@ class InteractiveLRRangeTest(ModelOrEngineLRRangeTest):
             wd_values = [0.0]
 
         all_values = []
-        lr_finder = LRFinderIgnite()
         for wd in wd_values:
             # get the classes generated
             self.restore_optimizer_and_model()
@@ -172,11 +188,11 @@ class InteractiveLRRangeTest(ModelOrEngineLRRangeTest):
                 param_group['weight_decay'] = wd
 
             # do a lr finding run
+            lr_finder = LRFinderIgnite()
             run = lr_finder.run(optimizer=optimizer, train_engine=train_engine, train_loader=train_loader,
                                 test_engine=test_engine, test_loader=test_loader, lr_min=lr_min, lr_max=lr_max,
                                 num_steps=num_steps, smooth_f=smooth_f, diverge_th=diverge_th,
-                                descending=self.descending,
-                                pbar=pbar)
+                                descending=self.descending, pbar=pbar)
             value_list = run
             all_values.append((list(value_list), wd))
 
@@ -202,12 +218,14 @@ class InteractiveLRRangeTest(ModelOrEngineLRRangeTest):
                     param_group['weight_decay'] = wd
 
                 # do a lr finding run
+                lr_finder = LRFinderIgnite()
                 value_list = lr_finder.run(optimizer=optimizer, train_engine=train_engine, train_loader=train_loader,
                                            test_engine=test_engine, test_loader=test_loader, lr_min=lr_min,
-                                           lr_max=lr_max,
-                                           num_steps=num_steps, smooth_f=smooth_f, diverge_th=diverge_th)
+                                           lr_max=lr_max, num_steps=num_steps, smooth_f=smooth_f,
+                                           diverge_th=diverge_th, pbar=pbar)
                 all_values.append((list(value_list), wd))
 
+        self.restore_optimizer_and_model()
         return {'lr_min': plot.lr_min, 'lr_max': plot.lr_max, 'weight_decay': wd}
 
 
@@ -217,15 +235,14 @@ class AutomaticLRRangeTest(ModelOrEngineLRRangeTest):
 
     def run(self, lr_min: float = 1e-7, lr_max: float = 1e1, num_steps: int = 50,
             smooth_f: float = .05, diverge_th: float = 5.,
-            wd_values: Optional[List[float]] = None, mult_f: float = 15.,
+            wd_values: Optional[List[float]] = None,
             pbar: bool = False) -> Dict['str', float]:
         """Similar to the interactive test, but the values for lr are selected automatically.
         The maximum lr is selected as the steepest improvement value of the smoothed metric plot.
-        The best weight decay is selected as the weight decay value for which the steepeste improvement
-        occurs at the gratest LR value.
+        The best weight decay is selected as the weight decay value for which the steepest improvement
+        occurs at the greatest LR value.
 
         :param pbar: whether to print a progress bar during training
-        :param mult_f: what fraction of the best lr should the lower bound of the interval be set to
         :param wd_values: the weight decay values to test for
         :param diverge_th:  the coefficient by which the current metric must differ from the best recorded value
             to consider that the metric has diverged
@@ -244,7 +261,6 @@ class AutomaticLRRangeTest(ModelOrEngineLRRangeTest):
             wd_values = [0.0]
 
         all_values = []
-        lr_finder = LRFinderIgnite()
         for wd in wd_values:
             self.restore_optimizer_and_model()
             # update the weight_decay
@@ -252,6 +268,7 @@ class AutomaticLRRangeTest(ModelOrEngineLRRangeTest):
                 param_group['weight_decay'] = wd
 
             # do a lr finding run
+            lr_finder = LRFinderIgnite()
             run = lr_finder.run(optimizer=optimizer, train_engine=train_engine, train_loader=train_loader,
                                 test_engine=test_engine, test_loader=test_loader, lr_min=lr_min, lr_max=lr_max,
                                 num_steps=num_steps, smooth_f=smooth_f, diverge_th=diverge_th,
@@ -280,6 +297,6 @@ class AutomaticLRRangeTest(ModelOrEngineLRRangeTest):
         # its steepest descent
         best_values = sorted(best_values, reverse=self.descending)
         lr_max, wd = best_values[0]
-        lr_min = lr_max / mult_f  # divide the max_lr by a factor of mult_f
 
-        return {'lr_min': lr_min, 'lr_max': lr_max, 'weight_decay': wd}
+        self.restore_optimizer_and_model()
+        return {'lr_max': lr_max, 'weight_decay': wd}

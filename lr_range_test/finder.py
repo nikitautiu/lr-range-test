@@ -1,10 +1,10 @@
 import copy
 from typing import Optional, Sequence
 
-import ignite
 import ignite.engine
 import numpy as np
 import torch
+import tqdm
 from ignite.engine import Events
 
 from lr_range_test.type_aliases import DataLoaderType, HistoryType
@@ -53,19 +53,22 @@ class LRFinderIgnite(object):
                 if self.smooth_f > 0:
                     loss = self.smooth_f * loss + (1 - self.smooth_f) * self.history[-1][1]  # perform smoothing
 
-            # append it to the history
-            self.history.append((self.lr_values[self.current_ind], loss))
-
             # stop if loss diverges. this means that
             # either it grows more than a factor of diverge_th than the best loss if it's supposed to descend
             # or it drops diverge_th times
             if self.descending:
-                diverging = loss > self.diverge_th * self.best_loss or np.isnan(self.history[-1][1])
+                diverging = loss > self.diverge_th * self.best_loss or np.isnan(loss)
             else:
-                diverging = loss < self.best_loss / self.diverge_th or np.isnan(self.history[-1][1])
+                diverging = loss < self.best_loss / self.diverge_th or np.isnan(loss)
             if diverging:
                 self.train_engine.terminate()
-                print('Stopping early, the loss has diverged')
+                if self.pbar is not None:
+                    tqdm.tqdm.write('Stopping early, the loss has diverged')
+                else:
+                    print('Stopping early, the loss has diverged')
+            else:
+                # append it to the history
+                self.history.append((self.lr_values[self.current_ind], loss))
 
             # update the learning rate
             if self.current_ind < len(self.lr_values) - 1:
@@ -73,6 +76,8 @@ class LRFinderIgnite(object):
                     param_group['lr'] = self.lr_values[self.current_ind]
 
             self.current_ind += 1  # update the iteration counter
+            if self.pbar is not None:
+                self.pbar.update()   # add a step to the progressbar
         else:
             self.train_engine.terminate()  # terminate after last epoch
 
@@ -102,9 +107,9 @@ class LRFinderIgnite(object):
         self.history = []
 
         # add progress bar
+        self.pbar = None
         if pbar:
-            pbar_handler = ignite.contrib.handlers.ProgressBar(persist=False)
-            pbar_handler.attach(train_engine)  # attach it
+            self.pbar = tqdm.tqdm(total=num_steps)
 
         # set the initial learning rate
         for param_group in optimizer.param_groups:
@@ -113,5 +118,9 @@ class LRFinderIgnite(object):
         # add the event to evaluate the learning rate
         train_engine.on(Events.ITERATION_COMPLETED)(self._train_step)
         train_engine.run(data=train_loader, max_epochs=(num_steps // len(self.train_loader)) + 1)
+        train_engine.remove_event_handler(self._train_step, Events.ITERATION_COMPLETED)
+        if pbar:
+            self.pbar.close()  # close the progressbar
+            self.pbar = None
 
         return self.history

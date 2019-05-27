@@ -17,10 +17,6 @@ def lr_range_test(optimizer: OptimizerType, model: torch.nn.Module,
                   automatic: bool = False, descending: bool = True,
                   device: str = 'cuda') -> Dict['str', float]:
     """
-    Run the a lr range test in either an interactive or an automatic fashion as proposed by
-    `Cyclical Learning Rates for Training Neural Networks <https://arxiv.org/pdf/1506.01186.pdf>`_.
-
-
     The function expects a ``model`` and ``optimizer`` for which to perform the test. This model
     is optimized with wrt. a loss function ``loss_fn``. The data is loaded from a given iterable
     (or a standard pytorch ``DataLoader``) called ``train_loader``. The loss will be calculated as
@@ -36,7 +32,9 @@ def lr_range_test(optimizer: OptimizerType, model: torch.nn.Module,
     `ignite metric <https://pytorch.org/ignite/metrics.html>`_. If the metric is expected to increase during training,
     (eg. accuracy) the ``descending`` parameter should be set to ``False``.
 
-    Finally the test
+    The test can be run in either the interactive our automatic way depending on the value of ``automatic``.
+
+    The results will be returned as a dictionary
 
 
     :param automatic: whether to perform an automatic lr range test or an interactive one
@@ -56,7 +54,7 @@ def lr_range_test(optimizer: OptimizerType, model: torch.nn.Module,
     :param lr_max: the lr to end on
     :param lr_min: the lr to start from
     :param smooth_f: the alpha coefficient for the exponential moving average
-    :return:
+    :return: a dictionary with the results
     """
 
     if automatic:
