@@ -59,3 +59,4 @@ html_static_path = ['_static']
 
 # config autodoc
 autodoc_member_order = 'bysource'
+autodoc_mock_imports = ['torch', 'matplotlib', 'numpy', 'ignite', 'tqdm']
