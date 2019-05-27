@@ -4,7 +4,7 @@ import torch
 from ignite import ignite
 from ignite.metrics import Loss
 
-from finder import LRFinderIgnite
+from lr_range_test.finder import LRFinderIgnite
 from tests.utils import set_reproducible, LogisticRegression, get_loaders, DEVICE
 
 
