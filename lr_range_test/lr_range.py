@@ -252,7 +252,7 @@ class AutomaticLRRangeTest(ModelOrEngineLRRangeTest):
         :param smooth_f: the alpha coefficient for the exponential moving average
         """
         # get the classes generated
-
+        self.save_optimizer_and_model()
         results = self.build_optimizer_trainers_loaders()
         optimizer, train_engine, train_loader, test_engine, test_loader = results
 

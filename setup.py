@@ -3,9 +3,22 @@ import os
 import re
 
 from setuptools import setup
-from sphinx.setup_command import BuildDoc
 
-cmdclass = {'build_sphinx': BuildDoc}
+# conditionally add teh documentation commands
+try:
+    from sphinx.setup_command import BuildDoc
+except ImportError:
+    cmdclass = {'build_sphinx': BuildDoc}
+    cmd_options = {
+        'build_sphinx': {
+            'project': ('setup.py', "lr-range-test"),
+            'version': ('setup.py', "0.0.1"),
+            'release': ('setup.py', "0.0.1"),
+            'source_dir': ('setup.py', 'docs')}
+    }
+else:
+    cmd_options = {}
+    cmdclass = {}
 
 
 def read(filename):
@@ -28,20 +41,21 @@ setup(
     packages=['lr_range_test'],
 
     cmdclass=cmdclass,
-    command_options={
-        'build_sphinx': {
-            'project': ('setup.py', "Nichita Utiu"),
-            'version': ('setup.py', "0.0.1"),
-            'release': ('setup.py', "0.0.1"),
-            'source_dir': ('setup.py', 'docs')}
-    },
+    command_options=cmd_options,
 
     install_requires=[
         'matplotlib>=3.0.3',
-        'numpy==1.16',
-        'pytorch-ignite==0.2',
-        'tqdm==4.32'
+        'numpy>=1.16',
+        'pytorch-ignite>=0.2',
+        'pytorch>=1.0.1',
+        'tqdm>=4.32'
     ],
+    extras_require={
+        'dev': [
+            'Sphinx>=2.0.1',
+            'sphinx-autodoc-typehints>=1.6.0'
+        ]
+    },
     test_suite='tests',
 
     classifiers=[
