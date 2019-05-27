@@ -14,7 +14,9 @@ except ImportError:
             'project': ('setup.py', "lr-range-test"),
             'version': ('setup.py', "0.0.1"),
             'release': ('setup.py', "0.0.1"),
-            'source_dir': ('setup.py', 'docs')}
+            'source_dir': ('setup.py', 'docs'),
+            'build_dir': ('setup.py', './public')
+        }
     }
 else:
     cmd_options = {}
@@ -47,7 +49,7 @@ setup(
         'matplotlib>=3.0.3',
         'numpy>=1.16',
         'pytorch-ignite>=0.2',
-        'pytorch>=1.0.1',
+        'torch',
         'tqdm>=4.32'
     ],
     extras_require={
