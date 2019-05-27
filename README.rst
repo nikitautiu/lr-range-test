@@ -9,7 +9,7 @@ be used with any combination of pytorch models and optimizers and supports searc
 How to install
 --------------
 To install simply use pip on the repository or download and install
-::bash
+.. code-block::bash
     pip install -e https://gitlab.rist.cloud/utiu/lr-range-test.git
     # or
     git clone https://gitlab.rist.cloud/utiu/lr-range-test.git
@@ -19,7 +19,7 @@ To install simply use pip on the repository or download and install
 How to use
 ----------
 Example usage on MNIST:
-::python
+.. code-block::python
     import matplotlib
     import torch
     import torch.nn as nn
