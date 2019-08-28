@@ -83,4 +83,4 @@ Example usage on MNIST:
 
 More
 ----
-For more info, consult the documentation.
+For more info, consult `the documentation <https://lr-range-test.readthedocs.io/en/latest/>`_.
